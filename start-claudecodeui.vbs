@@ -1,1 +1,1 @@
-CreateObject("WScript.Shell").Run "cmd /c cd /d """ & CreateObject("Scripting.FileSystemObject").GetParentFolderName(WScript.ScriptFullName) & """ && node node_modules\@siteboon\claude-code-ui\server\index.js", 0, False
+CreateObject("WScript.Shell").Run "cmd /c cd /d """ & CreateObject("Scripting.FileSystemObject").GetParentFolderName(WScript.ScriptFullName) & """ && node node_modules\@cloudcli-ai\cloudcli\dist-server\server\index.js", 0, False

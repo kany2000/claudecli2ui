@@ -6,7 +6,7 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3001"') do (
 )
 timeout /t 2 /nobreak >nul
 echo Starting...
-start /B /MIN node "node_modules\@siteboon\claude-code-ui\server\index.js"
+start /B /MIN node "node_modules\@cloudcli-ai\cloudcli\dist-server\server\index.js"
 timeout /t 3 /nobreak >nul
 echo.
 echo Claude Code Web UI restarted!
