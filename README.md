@@ -18,6 +18,10 @@ npm start
 
 Windows 下推荐双击 `start-claudecodeui.vbs` 静默后台启动（无窗口）。
 
+启动链路：`VBS → launcher.exe (Windows GUI) → CreateProcess(DETACHED_PROCESS) → node.exe watch-restart.js → 服务器 node`
+
+`launcher.exe` 使用 P/Invoke `CreateProcess` 配合 `DETACHED_PROCESS | CREATE_NO_WINDOW` 标志，确保 `node.exe` 完全不分配控制台（无 conhost.exe 泄漏）。编译为 Windows GUI 应用（winexe），自身无控制台窗口。
+
 启动后访问 **http://localhost:3001**，默认账号 `admin / admin123`。
 
 ## 启动方式
@@ -139,13 +143,14 @@ ipconfig | findstr IPv4
 ```
 claudecli2ui/
 ├── package.json                # 项目配置
+├── launcher.cs                 # C# 静默启动器源码（P/Invoke + DETACHED_PROCESS）
+├── launcher.exe                # 编译好的启动器（Windows GUI 应用）
 ├── start.bat                   # 后台启动脚本
-├── start-claudecodeui.bat      # 直接启动脚本
 ├── start-claudecodeui.vbs      # 静默启动脚本（推荐）
 ├── restart.bat                 # 一键重启脚本（有窗口）
 ├── restart-claudecodeui.vbs    # 静默重启脚本（推荐）
 ├── enable-lan-access.bat       # 局域网访问设置
-├── watch-restart.js            # 看门狗（自动重启）
+├── watch-restart.js            # 看门狗（自动重启 + 文件日志）
 ├── project/                    # 工作区目录
 └── node_modules/               # 依赖包
 ```
