@@ -1,12 +1,18 @@
-' Restart Claude Code UI silently (no console windows)
-Set shell = CreateObject("WScript.Shell")
+' Restart Claude Code UI silently (no console windows at all)
+Set wmi = GetObject("winmgmts:root\cimv2")
 
-' Kill any process listening on port 3001
-shell.Run "powershell -NoProfile -Command ""netstat -ano | Select-String '0.0.0.0:3001' | Select-String 'LISTENING' | ForEach-Object { Stop-Process -Id ([int]($_.split()[-1])) -Force -ErrorAction SilentlyContinue }""", 0, True
+' Kill any existing cloudcli server processes
+Set processes = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%cloudcli%dist-server%server%index.js%'")
+For Each proc In processes
+  proc.Terminate()
+Next
 
 ' Wait for port to release
 WScript.Sleep 2000
 
-' Start fresh watchdog silently
-shell.CurrentDirectory = "C:\Users\Administrator\claudecodeui"
-shell.Run """C:\Program Files\nodejs\node.exe"" watch-restart.js", 0, False
+' Start fresh watchdog with NO console window
+Set startup = wmi.Get("Win32_ProcessStartup")
+startup.CreateFlags = 134217728  ' &H08000000 = CREATE_NO_WINDOW
+wmi.Get("Win32_Process").Create _
+  "C:\Program Files\nodejs\node.exe C:\Users\Administrator\claudecodeui\watch-restart.js", _
+  "C:\Users\Administrator\claudecodeui", startup
