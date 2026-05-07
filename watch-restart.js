@@ -6,6 +6,23 @@ import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Self-relaunch with CREATE_NO_WINDOW to prevent any console window flash
+if (!process.env._CUI_RELAUNCHED) {
+  try {
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url)], {
+      windowsHide: true,
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, _CUI_RELAUNCHED: '1' },
+    });
+    child.unref();
+    process.exit(0);
+  } catch (e) {
+    // Self-relaunch failed — continue in current process (console mode)
+  }
+}
+
 const lockFile = resolve(__dirname, 'package-lock.json');
 const serverPath = resolve(__dirname, 'node_modules/@cloudcli-ai/cloudcli/dist-server/server/index.js');
 const require = createRequire(import.meta.url);
