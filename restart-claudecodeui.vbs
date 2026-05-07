@@ -1,4 +1,4 @@
-' Restart Claude Code Web UI silently (kill old, start fresh with no console window)
+' Restart Claude Code Web UI — kill old processes, start fresh with no console
 On Error Resume Next
 Set wmi = GetObject("winmgmts:root\cimv2")
 Set processes = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE Name='node.exe' AND CommandLine LIKE '%watch-restart%'")
@@ -10,11 +10,9 @@ For Each proc In processes
   proc.Terminate()
 Next
 WScript.Sleep 2000
-Set service = CreateObject("Schedule.Service")
-service.Connect()
-Set task = service.GetFolder("\").GetTask("ClaudeCodeUI")
-If Err.Number = 0 Then
-  task.Run(False)
-Else
-  CreateObject("WScript.Shell").Run "cmd /c cd /d C:\Users\Administrator\claudecodeui && node watch-restart.js", 0, False
-End If
+CreateObject("WScript.Shell").Run _
+  "C:\Users\Administrator\claudecodeui\launcher.exe" & _
+  " ""C:\Program Files\nodejs\node.exe""" & _
+  " ""C:\Users\Administrator\claudecodeui""" & _
+  " ""C:\Users\Administrator\claudecodeui\watch-restart.js""", _
+  0, False

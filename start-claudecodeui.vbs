@@ -1,12 +1,7 @@
-' Start Claude Code Web UI with no console window
-' Uses hidden Task Scheduler task to prevent window flash
-
-On Error Resume Next
-Set service = CreateObject("Schedule.Service")
-service.Connect()
-Set task = service.GetFolder("\").GetTask("ClaudeCodeUI")
-If Err.Number = 0 Then
-  task.Run(False)
-Else
-  CreateObject("WScript.Shell").Run "cmd /c cd /d C:\Users\Administrator\claudecodeui && node watch-restart.js", 0, False
-End If
+' Start Claude Code Web UI — no console window at all
+CreateObject("WScript.Shell").Run _
+  "C:\Users\Administrator\claudecodeui\launcher.exe" & _
+  " ""C:\Program Files\nodejs\node.exe""" & _
+  " ""C:\Users\Administrator\claudecodeui""" & _
+  " ""C:\Users\Administrator\claudecodeui\watch-restart.js""", _
+  0, False
