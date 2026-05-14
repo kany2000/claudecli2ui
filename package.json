@@ -11,6 +11,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@cloudcli-ai/cloudcli": "^1.31.5"
+    "@cloudcli-ai/cloudcli": "^1.32.0"
   }
 }
