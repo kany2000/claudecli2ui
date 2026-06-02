@@ -82,7 +82,7 @@ function startServer() {
   const child = spawn(NODE_EXE, [serverPath], {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: __dirname,
-    env: { ...process.env, VITE_IS_PLATFORM: 'true' },
+    env: { ...process.env, VITE_IS_PLATFORM: 'false' },
     windowsHide: true
   });
   child.stdout.pipe(serverLogStream);
