@@ -6,7 +6,7 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr /C:"0.0.0.0:3001" ^| findstr 
 )
 timeout /t 2 /nobreak >nul
 echo Starting with auto-restart watchdog...
-start /B /MIN node watch-restart.js
+start /B node watch-restart.js
 timeout /t 3 /nobreak >nul
 echo.
 echo Claude Code Web UI restarted!
