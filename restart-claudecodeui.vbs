@@ -11,8 +11,8 @@ For Each proc In processes
 Next
 WScript.Sleep 2000
 CreateObject("WScript.Shell").Run _
-  "C:\Users\Administrator\claudecodeui\launcher.exe" & _
+  "E:\projects\claudecli2ui\launcher.exe" & _
   " ""C:\Program Files\nodejs\node.exe""" & _
-  " ""C:\Users\Administrator\claudecodeui""" & _
-  " ""C:\Users\Administrator\claudecodeui\watch-restart.js""", _
+  " ""E:\projects\claudecli2ui""" & _
+  " ""E:\projects\claudecli2ui\watch-restart.js""", _
   0, False

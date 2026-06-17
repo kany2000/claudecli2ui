@@ -1,6 +1,6 @@
 // Watch for package changes and restart server automatically
-import { spawn } from 'child_process';
-import { watch } from 'fs';
+import { spawn, execSync } from 'child_process';
+import { watch, existsSync, statSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
@@ -14,12 +14,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const logFile = resolve(__dirname, 'watch-restart.log');
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
-  try { require('fs').appendFileSync(logFile, line); } catch {}
+  try {
+    // Auto-rotate if too large (5MB)
+    if (existsSync(logFile) && statSync(logFile).size > 5 * 1024 * 1024) {
+      require('fs').renameSync(logFile, logFile + '.old');
+    }
+    require('fs').appendFileSync(logFile, line);
+  } catch {}
 }
 
 const lockFile = resolve(__dirname, 'package-lock.json');
 const serverPath = resolve(__dirname, 'node_modules/@cloudcli-ai/cloudcli/dist-server/server/index.js');
 const require = createRequire(import.meta.url);
+const PORT = 3001;
 
 // ---------------------------------------------------------------------------
 // Load .env from the project root (the server's own load-env.js looks in the
@@ -48,9 +55,7 @@ try {
 // resolution failures when spawned from a hidden VBS window at startup.
 // ---------------------------------------------------------------------------
 function findNodeExecutable() {
-  // 1. Try the NVM/original path from where this script is running
   if (process.execPath) return process.execPath;
-  // 2. Common install locations
   const candidates = [
     'C:\\Program Files\\nodejs\\node.exe',
     'C:\\Program Files (x86)\\nodejs\\node.exe',
@@ -59,26 +64,107 @@ function findNodeExecutable() {
   for (const p of candidates) {
     try { require('fs').accessSync(p); return p; } catch {}
   }
-  // 3. Fallback — hope PATH works
   return 'node';
 }
 
 const NODE_EXE = findNodeExecutable();
 
-let server = null;
-let currentServer = null;
+// ---------------------------------------------------------------------------
+// Check if a port is in use (returns PID or null)
+// ---------------------------------------------------------------------------
+function findPidOnPort(port) {
+  try {
+    const result = execSync(
+      `netstat -ano | findstr ":${port} "`,
+      { encoding: 'utf8', timeout: 5000 }
+    );
+    const lines = result.split('\n').filter(l => l.includes('LISTENING'));
+    if (lines.length === 0) return null;
+    const parts = lines[0].trim().split(/\s+/);
+    return parseInt(parts[parts.length - 1], 10);
+  } catch {
+    return null;
+  }
+}
 
+function isPortFree(port) {
+  return findPidOnPort(port) === null;
+}
+
+// ---------------------------------------------------------------------------
+// Async wait helpers
+// ---------------------------------------------------------------------------
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// Wait for port to be free, polling every 500ms, up to timeoutMs
+async function waitForPortFree(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (isPortFree(port)) return true;
+    await sleep(500);
+  }
+  return isPortFree(port);
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let starting = false;          // 启动锁
+let server = null;             // 当前子进程引用
 let serverLogStream = null;
 
-function startServer() {
-  if (server) {
-    server.kill('SIGTERM');
-    setTimeout(() => { if (server && !server.killed) server.kill('SIGKILL'); }, 5000);
+// ---------------------------------------------------------------------------
+// Start / restart the server
+// ---------------------------------------------------------------------------
+async function startServer() {
+  if (starting) {
+    log('startServer: already starting, skip');
+    return;
   }
-  log('Starting server...');
-  // Pipe server stdout/stderr to a log file so we never need a console
+  starting = true;
+
+  // 1. 杀掉旧进程
+  if (server && !server.killed) {
+    log('startServer: killing old server (PID: ' + server.pid + ')');
+    server.kill('SIGTERM');
+    // 给 SIGTERM 3 秒，没死就 SIGKILL
+    await sleep(500);
+    if (!server.killed) {
+      // 先等一小会儿看进程是否自己退了
+      await sleep(2500);
+      if (!server.killed) {
+        log('startServer: force killing server (PID: ' + server.pid + ')');
+        server.kill('SIGKILL');
+        await sleep(500);
+      }
+    }
+  }
+
+  // 2. 等端口释放（最多 10 秒，TIME_WAIT 通常 < 4s）
+  log('startServer: waiting for port ' + PORT + ' to be free...');
+  const portFree = await waitForPortFree(PORT, 10000);
+  if (!portFree) {
+    // 端口还被占用但超时了——强杀占用进程
+    const pid = findPidOnPort(PORT);
+    if (pid) {
+      log('startServer: port ' + PORT + ' still held by PID ' + pid + ' after timeout, force killing');
+      try { execSync(`taskkill /f /pid ${pid}`, { stdio: 'ignore', timeout: 3000 }); } catch {}
+      await sleep(1000);
+    }
+  }
+
+  // 3. 准备日志流
   if (serverLogStream) try { serverLogStream.end(); } catch {}
-  serverLogStream = require('fs').createWriteStream(resolve(__dirname, 'server.log'), { flags: 'a' });
+  const logPath = resolve(__dirname, 'server.log');
+  if (existsSync(logPath) && statSync(logPath).size > 50 * 1024 * 1024) {
+    try { require('fs').renameSync(logPath, logPath + '.old'); } catch {}
+  }
+  serverLogStream = require('fs').createWriteStream(logPath, { flags: 'a' });
+
+  // 4. 启动新进程
+  log('startServer: starting server...');
   const child = spawn(NODE_EXE, [serverPath], {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: __dirname,
@@ -87,22 +173,51 @@ function startServer() {
   });
   child.stdout.pipe(serverLogStream);
   child.stderr.pipe(serverLogStream);
-  currentServer = child;
   server = child;
-  child.on('exit', (code) => {
-    // Only auto-restart if this is still the current server (not a stale one from a previous restart)
-    if (code !== 0 && child === currentServer) {
-      log('Server exited unexpectedly (code ' + code + '), restarting...');
-      startServer();
+
+  child.on('spawn', () => {
+    log('startServer: server started (PID: ' + child.pid + ')');
+    // 注意：不在 spawn 里解锁——等 exit 处理完再解
+  });
+
+  child.on('error', (err) => {
+    log('startServer: spawn error: ' + err.message);
+    if (child === server) {
+      starting = false;
+      // EADDRINUSE：杀占用进程，等一秒再重试
+      if (err.message.includes('EADDRINUSE')) {
+        const pid = findPidOnPort(PORT);
+        if (pid) {
+          log('startServer: EADDRINUSE, killing PID ' + pid);
+          try { execSync(`taskkill /f /pid ${pid}`, { stdio: 'ignore', timeout: 3000 }); } catch {}
+        }
+        setTimeout(() => startServer(), 1500);
+      }
     }
   });
-  child.on('spawn', () => log('Server started (PID: ' + child.pid + ')'));
+
+  child.on('exit', (code) => {
+    if (child !== server) return; // 过期事件，忽略
+    if (code === 0) {
+      log('startServer: server exited normally (code 0)');
+      starting = false;
+      return;
+    }
+    // 非正常退出——立刻重启
+    log('startServer: server exited (code ' + code + '), restarting...');
+    starting = false;
+    startServer();
+  });
 }
 
+// ---------------------------------------------------------------------------
 // Initial start
+// ---------------------------------------------------------------------------
 startServer();
 
+// ---------------------------------------------------------------------------
 // Watch package-lock.json for changes (npm install writes here)
+// ---------------------------------------------------------------------------
 log('Watching for package changes...');
 let debounce = null;
 try {
@@ -120,7 +235,6 @@ try {
   let lastMtime = null;
   setInterval(() => {
     try {
-      const { statSync } = require('fs');
       const mtime = statSync(lockFile).mtimeMs;
       if (lastMtime && mtime !== lastMtime) {
         log('Package changed, restarting...');
