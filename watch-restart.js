@@ -112,6 +112,7 @@ async function waitForPortFree(port, timeoutMs) {
 // State
 // ---------------------------------------------------------------------------
 let starting = false;          // 启动锁
+let restarting = false;        // 主动重启锁（避免 kill 旧进程触发 exit 事件导致重复启动）
 let server = null;             // 当前子进程引用
 let serverLogStream = null;
 
@@ -128,6 +129,7 @@ async function startServer() {
   // 1. 杀掉旧进程
   if (server && !server.killed) {
     log('startServer: killing old server (PID: ' + server.pid + ')');
+    restarting = true;    // 标记主动重启，防止 exit 事件重复触发 startServer
     server.kill('SIGTERM');
     // 给 SIGTERM 3 秒，没死就 SIGKILL
     await sleep(500);
@@ -136,6 +138,7 @@ async function startServer() {
       await sleep(2500);
       if (!server.killed) {
         log('startServer: force killing server (PID: ' + server.pid + ')');
+        restarting = true;    // 同上
         server.kill('SIGKILL');
         await sleep(500);
       }
@@ -177,13 +180,15 @@ async function startServer() {
 
   child.on('spawn', () => {
     log('startServer: server started (PID: ' + child.pid + ')');
-    // 注意：不在 spawn 里解锁——等 exit 处理完再解
+    restarting = false;    // 新进程启动成功，重置主动重启标记
+    // 注意：不在 spawn 里解锁 starting——等 exit 处理完再解
   });
 
   child.on('error', (err) => {
     log('startServer: spawn error: ' + err.message);
     if (child === server) {
       starting = false;
+      restarting = false;
       // EADDRINUSE：杀占用进程，等一秒再重试
       if (err.message.includes('EADDRINUSE')) {
         const pid = findPidOnPort(PORT);
@@ -198,6 +203,10 @@ async function startServer() {
 
   child.on('exit', (code) => {
     if (child !== server) return; // 过期事件，忽略
+    if (restarting) {
+      log('startServer: ignoring exit (code ' + code + ') during intentional restart');
+      return;
+    }
     if (code === 0) {
       log('startServer: server exited normally (code 0)');
       starting = false;

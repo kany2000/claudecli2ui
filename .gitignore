@@ -5,3 +5,4 @@ node_modules/
 *.cmd
 *.ps1
 *.log
+website/

@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "start": "npx @siteboon/claude-code-ui start",
-    "dev": "cloudcli start"
+    "dev": "cloudcli start",
+    "postinstall": "node patch-update.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@cloudcli-ai/cloudcli": "^1.32.0"
+    "@cloudcli-ai/cloudcli": "^1.34.0"
   }
 }
