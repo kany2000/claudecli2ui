@@ -115,6 +115,10 @@ let starting = false;          // 启动锁
 let restarting = false;        // 主动重启锁（避免 kill 旧进程触发 exit 事件导致重复启动）
 let server = null;             // 当前子进程引用
 let serverLogStream = null;
+let crashCount = 0;            // 连续崩溃计数（用于退避）
+let lastCrashTime = 0;         // 上次崩溃时间戳
+const MAX_CRASH_INTERVAL = 30000; // 30 秒内超过 3 次崩溃则长等待
+const MAX_CRASH_COUNT = 3;
 
 // ---------------------------------------------------------------------------
 // Start / restart the server
@@ -125,6 +129,12 @@ async function startServer() {
     return;
   }
   starting = true;
+  // DEBUG: log call stack to find where the 2nd startServer() comes from
+  const e = new Error();
+  log('startServer: called from ' + (e.stack ? e.stack.split('\n').slice(2,5).join(' | ') : 'unknown'));
+
+  // 清理可能残留的 .updating 标记（更新进程意外退出时可能留下）
+  try { require('fs').unlinkSync(updatingFile); } catch {}
 
   // 1. 杀掉旧进程
   if (server && !server.killed) {
@@ -154,7 +164,16 @@ async function startServer() {
     if (pid) {
       log('startServer: port ' + PORT + ' still held by PID ' + pid + ' after timeout, force killing');
       try { execSync(`taskkill /f /pid ${pid}`, { stdio: 'ignore', timeout: 3000 }); } catch {}
-      await sleep(1000);
+      // Windows TIME_WAIT 可能持续 2-4 分钟，等久一点再试
+      await sleep(3000);
+      if (!isPortFree(PORT)) {
+        const pid2 = findPidOnPort(PORT);
+        if (pid2) {
+          log('startServer: port still held, killing again PID ' + pid2);
+          try { execSync(`taskkill /f /pid ${pid2}`, { stdio: 'ignore', timeout: 3000 }); } catch {}
+          await sleep(2000);
+        }
+      }
     }
   }
 
@@ -187,16 +206,18 @@ async function startServer() {
   child.on('error', (err) => {
     log('startServer: spawn error: ' + err.message);
     if (child === server) {
-      starting = false;
       restarting = false;
-      // EADDRINUSE：杀占用进程，等一秒再重试
+      // EADDRINUSE：杀占用进程，等一会再重试
       if (err.message.includes('EADDRINUSE')) {
         const pid = findPidOnPort(PORT);
         if (pid) {
           log('startServer: EADDRINUSE, killing PID ' + pid);
           try { execSync(`taskkill /f /pid ${pid}`, { stdio: 'ignore', timeout: 3000 }); } catch {}
         }
-        setTimeout(() => startServer(), 1500);
+        setTimeout(() => {
+          starting = false;
+          startServer();
+        }, 3000);
       }
     }
   });
@@ -207,15 +228,27 @@ async function startServer() {
       log('startServer: ignoring exit (code ' + code + ') during intentional restart');
       return;
     }
+    const pid = child.pid;
     if (code === 0) {
-      log('startServer: server exited normally (code 0)');
+      log('startServer: server PID ' + pid + ' exited normally (code 0)');
       starting = false;
       return;
     }
-    // 非正常退出——立刻重启
-    log('startServer: server exited (code ' + code + '), restarting...');
-    starting = false;
-    startServer();
+    // 非正常退出——用退避延迟重启
+    // 注意：不在这里 reset starting，由 setTimeout 回调负责，
+    // 防止当前 startServer 还在运行时另一个 exit 再触发一次。
+    const now = Date.now();
+    if (now - lastCrashTime > MAX_CRASH_INTERVAL) {
+      crashCount = 0;  // 超过间隔重置计数
+    }
+    crashCount++;
+    lastCrashTime = now;
+    const backoff = crashCount > MAX_CRASH_COUNT ? 30000 : 3000;
+    log('startServer: server PID ' + pid + ' exited (code ' + code + '), crash #' + crashCount + ', restarting in ' + backoff + 'ms');
+    setTimeout(() => {
+      starting = false;
+      startServer();
+    }, backoff);
   });
 }
 
@@ -229,14 +262,28 @@ startServer();
 // ---------------------------------------------------------------------------
 log('Watching for package changes...');
 let debounce = null;
+const updatingFile = resolve(__dirname, '.updating');
+function isUpdating() {
+  try { return require('fs').existsSync(updatingFile); } catch { return false; }
+}
 try {
   watch(lockFile, (event) => {
     if (event === 'change') {
+      // 如果正在更新中（.updating 标记存在），不触发重启，等待下次变化
+      if (isUpdating()) {
+        log('Package change detected during update, deferring restart');
+        return;
+      }
       clearTimeout(debounce);
       debounce = setTimeout(() => {
+        // double-check after debounce
+        if (isUpdating()) {
+          log('Update still in progress after debounce, skipping restart');
+          return;
+        }
         log('Package changed, restarting...');
         startServer();
-      }, 2000);
+      }, 5000);
     }
   });
 } catch (e) {
